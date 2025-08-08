@@ -1,0 +1,26 @@
+# Ignore virtual environment
+myvenv/
+venv/
+.env/
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+
+# Ignore logs and temp
+*.log
+*.tmp
+*.swp
+
+# Ignore model/data/cache files
+*.bin
+*.pt
+*.ckpt
+*.onnx
+*.lib
+*.dll
+*.so
+*.dylib
+
+# Ignore other cache
+.cache/
