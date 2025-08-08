@@ -1,8 +1,8 @@
-# ragapi/llm_chain.py
 import os, glob
 from dotenv import load_dotenv
-from functools import lru_cache
 import logging
+import json
+from functools import lru_cache
 
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -18,14 +18,11 @@ load_dotenv()
 os.environ['PPLX_API_KEY'] = os.getenv("ppxapi")
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
-# Set up logging to see progress during deployment
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CACHING THE RETRIEVER ONCE DURING APPLICATION STARTUP ---
-# The logic is moved out of a function to ensure it's executed once
-# when the module is loaded (i.e., when the server starts).
 logger.info("Starting document loading and processing...")
 try:
     docs = []
@@ -57,47 +54,45 @@ try:
     logger.info("Document processing complete. Retriever is ready.")
 
 except Exception as e:
-    # This will catch any errors during file loading or embedding creation
-    # and prevent the server from crashing.
     logger.error(f"Failed to load documents or create retriever: {e}")
     CACHED_RETRIEVER = None
 
 # --- RAG CHAIN DEFINITION ---
 llm = ChatPerplexity(temperature=0, model="sonar")
 
+# Corrected Prompt Template
 prompt = PromptTemplate(
     template="""
     You are an AI assistant specialized in analyzing policy documents.
-    Your task is to analyze a user's query and the provided context from a set of insurance documents.
-    Based on this information, you must determine if an insurance claim would be 'Approved' or 'Rejected'.
+    Your task is to analyze a list of questions and the provided context from insurance documents.
+    For each question, you must provide a concise, direct answer based ONLY on the context.
+    If the context does not contain the answer, state that the information is not available.
 
-    Follow these steps:
-    1.  Parse the user's query to understand the core details (e.g., age, procedure, location, policy duration).
-    2.  Search the provided context for relevant clauses, rules, or exclusions.
-    3.  Based on the context, make a decision on the claim's status ('Approved' or 'Rejected').
-    4.  Provide a detailed justification for your decision, referencing specific documents and clauses.
-    5.  Determine the 'Amount'. If rejected, set this to 'Not Applicable'. If approved, provide a general status like 'Varies' or 'Enhanced Sum Insured' if applicable.
-
-    Format your final response as a single JSON object with the following structure:
-    {{
-        "Decision": "Approved" or "Rejected",
-        "Amount": "Not Applicable", "Varies", or a specific value if known,
-        "Justification": "A detailed explanation referencing the documents and clauses.",
-        "Overall": "Yes, knee surgery is covered under the policy"
-    }}
-
+    The user will provide a list of questions. You must generate an answer for each question.
+    Do not add any extra information or conversational filler.
+    
     <context>
     {context}
     </context>
 
-    User's Query: {input}
+    Questions: {input}
+
+    Please return a JSON object with a single key 'answers' which is a list of strings,
+    where each string is the answer to one of the questions.
+    Example:
+    {{
+      "answers": [
+        "Answer 1",
+        "Answer 2",
+        "Answer 3"
+      ]
+    }}
     """,
     input_variables=["context", "input"],
 )
 
 parser = JsonOutputParser()
 
-# The rag_chain now uses the globally available CACHED_RETRIEVER directly.
 rag_chain = (
     {"context": CACHED_RETRIEVER, "input": RunnablePassthrough()}
     | prompt
@@ -105,9 +100,11 @@ rag_chain = (
     | parser
 )
 
-def analyze_query(user_query: str) -> dict:
+def analyze_questions(questions: list) -> dict:
     if CACHED_RETRIEVER is None:
         logger.error("Retriever is not available. Cannot process query.")
         return {"error": "Internal server error. Document processing failed on startup."}
-    return rag_chain.invoke(user_query)
-
+    
+    # Pass the list of questions as a string to the chain
+    questions_str = json.dumps(questions)
+    return rag_chain.invoke(questions_str)
